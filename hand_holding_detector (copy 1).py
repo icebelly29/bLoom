@@ -25,13 +25,13 @@ class HandHoldingDetector(Node):
 
         # --- Serial Port Setup ---
         self.serial_port = None
-        # try:
-        #     self.get_logger().info(f"Attempting to open serial port: {self.serial_port_name} at {self.baud_rate} baud.")
-        #     self.serial_port = serial.Serial(self.serial_port_name, self.baud_rate, timeout=1)
-        #     self.get_logger().info("Serial port opened successfully.")
-        # except serial.SerialException as e:
-        #     self.get_logger().error(f"Could not open serial port: {e}")
-        #     self.get_logger().warn("Node will run without serial output. Please check port and permissions (e.g., 'sudo adduser $USER dialout').")
+        try:
+            self.get_logger().info(f"Attempting to open serial port: {self.serial_port_name} at {self.baud_rate} baud.")
+            self.serial_port = serial.Serial(self.serial_port_name, self.baud_rate, timeout=1)
+            self.get_logger().info("Serial port opened successfully.")
+        except serial.SerialException as e:
+            self.get_logger().error(f"Could not open serial port: {e}")
+            self.get_logger().warn("Node will run without serial output. Please check port and permissions (e.g., 'sudo adduser $USER dialout').")
 
         # --- ROS2 Subscription ---
         self.subscription = self.create_subscription(
@@ -78,8 +78,8 @@ class HandHoldingDetector(Node):
             # State change detection: from NOT holding to HOLDING
             if currently_holding and not self.is_holding:
                 self.is_holding = True
-                self.get_logger().info(f"Hand holding DETECTED! (Distance: {dist:.2f}px). Sending '1' to serial.")
-                self.send_serial_signal('1')
+                self.get_logger().info(f"Hand holding DETECTED! (Distance: {dist:.2f}px). Sending 'open' to serial.")
+                self.send_serial_signal('open\n')
 
             # State change detection: from HOLDING to NOT holding
             elif not currently_holding and self.is_holding:

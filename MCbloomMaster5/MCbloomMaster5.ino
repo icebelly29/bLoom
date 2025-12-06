@@ -20,7 +20,7 @@ const unsigned long OPEN_DURATION = 20000;  // 20 seconds in milliseconds
 
 void setup() {
   pinMode(ledPin, OUTPUT);
-  Serial.begin(115200);
+  Serial.begin(9600);
   Wire.begin();  // Master mode
 
   while (!Serial) {

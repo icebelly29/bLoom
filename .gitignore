@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node modules
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ROS2
+install/
+log/
+build/
+
+# Compiled binaries
+binaries/
+*.hex
+*.elf
+*.eep
+*.bin
+
+# Arduino build files
+*.ino.bak
+*.ino.cache
+
+# Logs
+*.log
+logs/
+/tmp/
+
+# Temporary files
+*.tmp
+*.bak
+*.cache
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.venv
+venv/
+
+# Local config (if any sensitive data)
+# config/local_*
+
+# Binary tools (arduino-cli)
+bin/
+
+# Keep package.json but ignore lock file
+package-lock.json
+
