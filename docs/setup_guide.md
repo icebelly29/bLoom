@@ -32,6 +32,16 @@ You have two sketches: `MCbloomMaster5.ino` and `MCbloomSlave5.ino`. You need to
 
     *Note: If you intended to use the slave sketch instead, replace `MCbloomMaster5.ino` with `MCbloomSlave5.ino` in the commands above.*
 
+4.  **Monitor Arduino Serial Output** (Optional but recommended for debugging):
+
+    To view the Arduino's serial output and verify it's receiving commands, open a new terminal and run:
+
+    ```bash
+    ./bin/arduino-cli monitor -p /dev/ttyUSB0 -b arduino:avr:uno --config baudrate=9600
+    ```
+
+    This will show you real-time serial communication. Press `Ctrl+A` then `K` to exit, or use `Ctrl+C`.
+
 ## 3. Run the Hand Detection System
 
 The system requires two separate processes running in two different terminals.

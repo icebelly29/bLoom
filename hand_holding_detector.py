@@ -14,21 +14,25 @@ class HandHoldingDetector(Node):
         # --- Parameters ---
         self.declare_parameter('serial_port', '/dev/ttyUSB0')
         self.declare_parameter('baud_rate', 9600)
-        self.declare_parameter('holding_threshold_pixels', 30.0)  # Stricter default threshold
+        self.declare_parameter('holding_threshold_pixels', 30.0)  # Threshold to detect holding
+        self.declare_parameter('release_threshold_pixels', 40.0)  # Threshold to detect release (hysteresis)
         self.declare_parameter('strict_pair_threshold', 30.0)  # Maximum distance to consider a pair
         self.declare_parameter('holding_frames_threshold', 3)
         self.declare_parameter('release_frames_threshold', 5)
         self.declare_parameter('ema_alpha', 0.2)  # Smoothing factor for distance
         self.declare_parameter('min_open_duration_seconds', 10.0)  # Minimum time to stay open before allowing close
+        self.declare_parameter('cooldown_seconds', 5.0)  # Cooldown period after closing before new detection
 
         self.serial_port_name = self.get_parameter('serial_port').get_parameter_value().string_value
         self.baud_rate = self.get_parameter('baud_rate').get_parameter_value().integer_value
         self.distance_threshold = self.get_parameter('holding_threshold_pixels').get_parameter_value().double_value
+        self.release_threshold = self.get_parameter('release_threshold_pixels').get_parameter_value().double_value
         self.strict_pair_threshold = self.get_parameter('strict_pair_threshold').get_parameter_value().double_value
         self.holding_frames_threshold = self.get_parameter('holding_frames_threshold').get_parameter_value().integer_value
         self.release_frames_threshold = self.get_parameter('release_frames_threshold').get_parameter_value().integer_value
         self.ema_alpha = self.get_parameter('ema_alpha').get_parameter_value().double_value
         self.min_open_duration = self.get_parameter('min_open_duration_seconds').get_parameter_value().double_value
+        self.cooldown_seconds = self.get_parameter('cooldown_seconds').get_parameter_value().double_value
 
 
         # --- State ---
@@ -37,18 +41,32 @@ class HandHoldingDetector(Node):
         self.release_frames_count = 0
         self.smoothed_distance = None
         self.last_open_time = None  # Timestamp when "open" was last sent
+        self.last_close_time = None  # Timestamp when "close" was last sent (for cooldown)
         self.last_command_sent = None  # Track last command to prevent spamming
         self.is_in_open_cycle = False  # True when we've sent "open" and are waiting for auto-close
+        self.tracked_pair_ids = None  # Track which specific hand pair we're monitoring (hand1_id, hand2_id)
+        self.tracked_pair_lost_frames = 0  # Count frames where tracked pair wasn't found (grace period)
+        self.tracked_pair_lost_threshold = 10  # Clear tracking after this many consecutive frames without finding pair
 
         # --- Serial Port Setup ---
         self.serial_port = None
         try:
             self.get_logger().info(f"Attempting to open serial port: {self.serial_port_name} at {self.baud_rate} baud.")
-            self.serial_port = serial.Serial(self.serial_port_name, self.baud_rate, timeout=1)
-            self.get_logger().info("Serial port opened successfully.")
+            # Check if port exists
+            import os
+            if not os.path.exists(self.serial_port_name):
+                self.get_logger().error(f"Serial port {self.serial_port_name} does not exist!")
+                self.get_logger().warn("Node will run without serial output. Make sure Arduino is connected and port is correct.")
+            else:
+                self.serial_port = serial.Serial(self.serial_port_name, self.baud_rate, timeout=1)
+                self.get_logger().info("Serial port opened successfully.")
         except serial.SerialException as e:
             self.get_logger().error(f"Could not open serial port: {e}")
-            self.get_logger().warn("Node will run without serial output. Please check port and permissions (e.g., 'sudo adduser $USER dialout').")
+            self.get_logger().warn("Node will run without serial output.")
+            self.get_logger().warn("Possible causes:")
+            self.get_logger().warn("  1. Port is busy (close Arduino monitor/IDE)")
+            self.get_logger().warn("  2. Wrong port name (check with: ls /dev/ttyUSB* /dev/ttyACM*)")
+            self.get_logger().warn("  3. Permissions issue (run: sudo adduser $USER dialout, then log out/in)")
 
         # --- ROS2 Subscription ---
         self.subscription = self.create_subscription(
@@ -58,10 +76,11 @@ class HandHoldingDetector(Node):
             10
         )
         self.get_logger().info(f"Hand Holding Detector is running. Waiting for hand landmarks...")
-        self.get_logger().info(f"Holding distance threshold set to: {self.distance_threshold} pixels.")
+        self.get_logger().info(f"Holding threshold: {self.distance_threshold}px, Release threshold: {self.release_threshold}px (hysteresis)")
         self.get_logger().info(f"Strict pair threshold set to: {self.strict_pair_threshold} pixels.")
         self.get_logger().info(f"EMA alpha set to: {self.ema_alpha}.")
         self.get_logger().info(f"Minimum open duration: {self.min_open_duration} seconds.")
+        self.get_logger().info(f"Cooldown period: {self.cooldown_seconds} seconds after closing.")
 
 
     def get_all_hand_keypoints_from_person(self, person_target):
@@ -193,120 +212,221 @@ class HandHoldingDetector(Node):
         return score
 
     def hand_lmk_callback(self, msg):
-        # Extract all hand keypoints from all person targets
-        # Each person can have 0, 1, or 2 hands (left/right)
-        valid_hands_with_keypoints = []
-        
-        for i, target in enumerate(msg.targets):
-            target_type = getattr(target, 'type', 'unknown')
-            
-            # Extract hand keypoints from person targets only
-            if target_type == 'person':
-                # Get all hand keypoints for each person (can be 0, 1, or 2 hands)
-                hand_keypoints_list = self.get_all_hand_keypoints_from_person(target)
-                for hand_idx, hand_kps in enumerate(hand_keypoints_list):
-                    if len(hand_kps) >= 5:  # Need at least 5 keypoints
-                        palm_center = self.get_hand_palm_center(hand_kps)
-                        if palm_center:
-                            valid_hands_with_keypoints.append({
-                                'id': f"person_{i}_hand_{hand_idx}",
-                                'wrist': hand_kps[0],  # Wrist position (index 0)
-                                'palm_center': palm_center,
-                                'keypoints': hand_kps
-                            })
-        
-        # Need at least 2 hands to detect holding
-        if len(valid_hands_with_keypoints) < 2:
-            if self.is_holding:
-                self.release_frames_count += 1
-                if self.release_frames_count >= self.release_frames_threshold:
-                    self.is_holding = False
-                    self.release_frames_count = 0
-                    self.smoothed_distance = None
-                    self.get_logger().info(f"Hands released (only {len(valid_hands_with_keypoints)} hand(s) detected). Sending 'close'.")
-                    self.send_serial_signal('close')
-            return
-
-
-        # Find the best pair using interaction score and distance
-        best_pair = None
-        best_score = 0.0
-        best_wrist_dist = float('inf')
-        
-        for i in range(len(valid_hands_with_keypoints)):
-            for j in range(i + 1, len(valid_hands_with_keypoints)):
-                hand1 = valid_hands_with_keypoints[i]
-                hand2 = valid_hands_with_keypoints[j]
-                
-                # Calculate interaction score (handles overlap better)
-                interaction_score = self.calculate_hand_interaction_score(
-                    hand1['keypoints'], 
-                    hand2['keypoints']
-                )
-                
-                # Calculate wrist-to-wrist distance
-                wrist_dist = math.sqrt(
-                    (hand1['wrist'][0] - hand2['wrist'][0])**2 + 
-                    (hand1['wrist'][1] - hand2['wrist'][1])**2
-                )
-                
-                # Only consider pairs within strict threshold
-                if wrist_dist < self.strict_pair_threshold:
-                    # Prefer pairs with high interaction score and close distance
-                    if interaction_score > best_score or (interaction_score == best_score and wrist_dist < best_wrist_dist):
-                        best_score = interaction_score
-                        best_wrist_dist = wrist_dist
-                        best_pair = (hand1, hand2, wrist_dist)
-        
-        if best_pair is None:
-            # If we're in an open cycle, check if 10 seconds have passed
-            if self.is_in_open_cycle:
-                if self.last_open_time is not None:
-                    time_since_open = time.time() - self.last_open_time
-                    if time_since_open >= self.min_open_duration:
-                        # 10 seconds have passed, send close automatically
-                        self.get_logger().info(f"Auto-closing after {self.min_open_duration} seconds. Sending 'close'.")
-                        self.send_serial_signal('close')
-                        self.is_in_open_cycle = False
-                        self.last_open_time = None
-                        self.is_holding = False
-                        self.holding_frames_count = 0
-                        self.release_frames_count = 0
-                        self.smoothed_distance = None
-            return
-        
-        hand1, hand2, wrist_dist = best_pair
-        
-        # Use wrist distance for detection (most reliable, least occluded)
-        dist = wrist_dist
-
-        # --- Calculate and Smooth Distance ---
         try:
+            # Extract all hand keypoints from all person targets
+            # Each person can have 0, 1, or 2 hands (left/right)
+            valid_hands_with_keypoints = []
+            
+            if not hasattr(msg, 'targets') or msg.targets is None:
+                return
+            
+            for i, target in enumerate(msg.targets):
+                target_type = getattr(target, 'type', 'unknown')
+                
+                # Extract hand keypoints from person targets only
+                if target_type == 'person':
+                    # Get all hand keypoints for each person (can be 0, 1, or 2 hands)
+                    hand_keypoints_list = self.get_all_hand_keypoints_from_person(target)
+                    for hand_idx, hand_kps in enumerate(hand_keypoints_list):
+                        if len(hand_kps) >= 5:  # Need at least 5 keypoints
+                            palm_center = self.get_hand_palm_center(hand_kps)
+                            if palm_center:
+                                valid_hands_with_keypoints.append({
+                                    'id': f"person_{i}_hand_{hand_idx}",
+                                    'wrist': hand_kps[0],  # Wrist position (index 0)
+                                    'palm_center': palm_center,
+                                    'keypoints': hand_kps
+                                })
+            
+            # Need at least 2 hands to detect holding
+            if len(valid_hands_with_keypoints) < 2:
+                # If we're in an open cycle, check if 10 seconds have passed before allowing close
+                if self.is_in_open_cycle:
+                    if self.last_open_time is not None:
+                        time_since_open = time.time() - self.last_open_time
+                        if time_since_open >= self.min_open_duration:
+                            # 10 seconds have passed - now we can close if hands are gone
+                            self.release_frames_count += 1
+                            if self.release_frames_count >= self.release_frames_threshold:
+                                self.get_logger().info(f"Hands released (only {len(valid_hands_with_keypoints)} hand(s) detected) after {self.min_open_duration} seconds. Sending 'close'.")
+                                self.send_serial_signal('close')
+                                self.is_in_open_cycle = False
+                                self.last_open_time = None
+                                self.last_close_time = time.time()  # Record close time for cooldown
+                                self.is_holding = False
+                                self.holding_frames_count = 0
+                                self.release_frames_count = 0
+                                self.smoothed_distance = None
+                                self.tracked_pair_ids = None  # Clear tracking after closing
+                        else:
+                            # Still within 10-second minimum - don't allow closing yet
+                            self.release_frames_count = 0
+                            self.get_logger().debug(f"Only {len(valid_hands_with_keypoints)} hand(s) detected, but still within {self.min_open_duration}s minimum. Waiting...")
+                return
+
+
+            # Check cooldown period - don't detect if we just closed
+            if self.last_close_time is not None:
+                time_since_close = time.time() - self.last_close_time
+                if time_since_close < self.cooldown_seconds:
+                    # Still in cooldown, skip detection
+                    return
+            
+            # Find the best pair using interaction score and distance
+            # If we have a tracked pair, try to use it first
+            tracked_pair = None
+            if self.tracked_pair_ids is not None:
+                # Look for the tracked pair in current hands
+                tracked_hand1 = None
+                tracked_hand2 = None
+                for hand in valid_hands_with_keypoints:
+                    if hand['id'] == self.tracked_pair_ids[0]:
+                        tracked_hand1 = hand
+                    elif hand['id'] == self.tracked_pair_ids[1]:
+                        tracked_hand2 = hand
+                
+                if tracked_hand1 and tracked_hand2:
+                    # Tracked pair still available - use it
+                    wrist_dist = math.sqrt(
+                        (tracked_hand1['wrist'][0] - tracked_hand2['wrist'][0])**2 + 
+                        (tracked_hand1['wrist'][1] - tracked_hand2['wrist'][1])**2
+                    )
+                    if wrist_dist < self.strict_pair_threshold * 2:  # More lenient for tracked pair
+                        tracked_pair = (tracked_hand1, tracked_hand2, wrist_dist)
+                else:
+                    # Tracked pair not found this frame - increment lost counter
+                    self.tracked_pair_lost_frames += 1
+                    if self.tracked_pair_lost_frames >= self.tracked_pair_lost_threshold:
+                        # Lost for too many frames - clear tracking
+                        self.tracked_pair_ids = None
+                        self.tracked_pair_lost_frames = 0
+                        self.get_logger().info("Tracked pair lost (not found for {} frames), will search for new pair".format(self.tracked_pair_lost_threshold))
+            
+            # If we have a tracked pair, use it; otherwise find best pair
+            best_pair = None
+            best_score = 0.0
+            best_wrist_dist = float('inf')
+            
+            if tracked_pair:
+                # Use tracked pair - reset lost counter since we found it
+                best_pair = tracked_pair
+                self.tracked_pair_lost_frames = 0  # Reset counter when pair is found
+            else:
+                # Find best pair from all available hands
+                for i in range(len(valid_hands_with_keypoints)):
+                    for j in range(i + 1, len(valid_hands_with_keypoints)):
+                        hand1 = valid_hands_with_keypoints[i]
+                        hand2 = valid_hands_with_keypoints[j]
+                        
+                        # Calculate interaction score (handles overlap better)
+                        interaction_score = self.calculate_hand_interaction_score(
+                            hand1['keypoints'], 
+                            hand2['keypoints']
+                        )
+                        
+                        # Calculate wrist-to-wrist distance
+                        wrist_dist = math.sqrt(
+                            (hand1['wrist'][0] - hand2['wrist'][0])**2 + 
+                            (hand1['wrist'][1] - hand2['wrist'][1])**2
+                        )
+                        
+                        # Only consider pairs within strict threshold
+                        if wrist_dist < self.strict_pair_threshold:
+                            # Prefer pairs with high interaction score and close distance
+                            if interaction_score > best_score or (interaction_score == best_score and wrist_dist < best_wrist_dist):
+                                best_score = interaction_score
+                                best_wrist_dist = wrist_dist
+                                best_pair = (hand1, hand2, wrist_dist)
+            
+            # If we found a new best pair and don't have a tracked pair, start tracking it
+            if best_pair and self.tracked_pair_ids is None:
+                hand1, hand2, _ = best_pair
+                self.tracked_pair_ids = (hand1['id'], hand2['id'])
+                self.tracked_pair_lost_frames = 0  # Reset lost counter
+                self.get_logger().info(f"Started tracking pair: {hand1['id']} and {hand2['id']}")
+            
+            if best_pair is None:
+                # No valid pair found
+                # Don't clear tracking immediately - let the grace period handle it
+                # This prevents clearing on temporary occlusions
+                
+                # If we're in an open cycle, check if we should close
+                if self.is_in_open_cycle:
+                    if self.last_open_time is not None:
+                        time_since_open = time.time() - self.last_open_time
+                        if time_since_open >= self.min_open_duration:
+                            # 10 seconds have passed - no pair found means hands released
+                            # Send close since hands are no longer holding
+                            self.release_frames_count += 1
+                            if self.release_frames_count >= self.release_frames_threshold:
+                                self.get_logger().info(f"Hands released (no pair found) after {self.min_open_duration} seconds. Sending 'close'.")
+                                self.send_serial_signal('close')
+                                self.is_in_open_cycle = False
+                                self.last_open_time = None
+                                self.last_close_time = time.time()  # Record close time for cooldown
+                                self.is_holding = False
+                                self.holding_frames_count = 0
+                                self.release_frames_count = 0
+                                self.smoothed_distance = None
+                                self.tracked_pair_ids = None  # Clear tracking after closing
+                    else:
+                        # Still within 10-second minimum - don't allow closing yet
+                        self.release_frames_count = 0
+                return
+            
+            hand1, hand2, wrist_dist = best_pair
+            
+            # Use wrist distance for detection (most reliable, least occluded)
+            dist = wrist_dist
+
+            # --- Calculate and Smooth Distance ---
             # Apply Exponential Moving Average (EMA) to smooth the distance
             if self.smoothed_distance is None:
                 self.smoothed_distance = dist
             else:
                 self.smoothed_distance = self.ema_alpha * dist + (1 - self.ema_alpha) * self.smoothed_distance
 
-            # --- Detection Logic based on Smoothed Distance ---
-            # Use strict threshold - hands holding are very close
-            currently_holding = self.smoothed_distance < self.distance_threshold
+            # --- Detection Logic with Hysteresis ---
+            # Use different thresholds for detecting holding vs releasing (hysteresis)
+            # This prevents flickering at the threshold edge
+            
+            if self.is_holding:
+                # Currently holding - use release threshold (higher, more lenient)
+                # Only release if distance exceeds release threshold
+                currently_holding = self.smoothed_distance < self.release_threshold
+            else:
+                # Not holding - use holding threshold (lower, stricter)
+                # Only detect holding if distance is below holding threshold
+                currently_holding = self.smoothed_distance < self.distance_threshold
 
-            # Check if we're in an open cycle (waiting for auto-close after 10 seconds)
+            # Check if we're in an open cycle (waiting for minimum 10 seconds before allowing close)
             if self.is_in_open_cycle:
                 if self.last_open_time is not None:
                     time_since_open = time.time() - self.last_open_time
                     if time_since_open >= self.min_open_duration:
-                        # 10 seconds have passed, send close automatically
-                        self.get_logger().info(f"Auto-closing after {self.min_open_duration} seconds. Sending 'close'.")
-                        self.send_serial_signal('close')
-                        self.is_in_open_cycle = False
-                        self.last_open_time = None
-                        self.is_holding = False
-                        self.holding_frames_count = 0
+                        # 10 seconds have passed - now we can check if hands are still holding
+                        # If hands are NOT holding anymore, send close
+                        if not currently_holding:
+                            self.release_frames_count += 1
+                            if self.release_frames_count >= self.release_frames_threshold:
+                                # Hands released after minimum duration - send close
+                                self.get_logger().info(f"Hands released after {self.min_open_duration} seconds. Sending 'close'.")
+                                self.send_serial_signal('close')
+                                self.is_in_open_cycle = False
+                                self.last_open_time = None
+                                self.last_close_time = time.time()  # Record close time for cooldown
+                                self.is_holding = False
+                                self.holding_frames_count = 0
+                                self.release_frames_count = 0
+                                self.smoothed_distance = None  # Reset EMA
+                                self.tracked_pair_ids = None  # Clear tracking after closing
+                        else:
+                            # Still holding - reset release counter and keep flower open
+                            self.release_frames_count = 0
+                    else:
+                        # Still within 10-second minimum - don't allow closing yet
+                        # Reset release counter to prevent premature closing
                         self.release_frames_count = 0
-                        self.smoothed_distance = None  # Reset EMA
-                # Don't process new detections while in open cycle
                 return
 
             # Normal detection logic (only when not in open cycle)
@@ -314,19 +434,27 @@ class HandHoldingDetector(Node):
                 self.holding_frames_count += 1
                 self.release_frames_count = 0
                 if self.holding_frames_count >= self.holding_frames_threshold and not self.is_holding:
-                    # Detected holding - send open and start 10-second timer
+                    # Detected holding - send open and start 10-second minimum timer
                     self.is_holding = True
                     self.is_in_open_cycle = True
-                    self.get_logger().info(f"Hand holding DETECTED! (Distance: {self.smoothed_distance:.2f}px). Sending 'open' to serial.")
+                    self.get_logger().info(f"Hand holding DETECTED! (Distance: {self.smoothed_distance:.2f}px, Threshold: {self.distance_threshold}px). Sending 'open' to serial.")
                     self.send_serial_signal('open')
                     self.last_open_time = time.time()  # Record when we sent "open"
+                    # Ensure we're tracking this pair
+                    if self.tracked_pair_ids is None:
+                        hand1, hand2, _ = best_pair
+                        self.tracked_pair_ids = (hand1['id'], hand2['id'])
             else:
-                # Hands not holding - reset counters but don't close (wait for auto-close)
+                # Hands not holding - reset counters
                 self.holding_frames_count = 0
                 self.release_frames_count = 0
 
-        except AttributeError:
-            self.get_logger().warn("Could not get x, y from point structure.", throttle_duration_sec=5)
+        except AttributeError as e:
+            self.get_logger().warn(f"Could not get x, y from point structure: {e}", throttle_duration_sec=5)
+            return
+        except Exception as e:
+            # Catch any other exceptions to prevent node crash
+            self.get_logger().error(f"Exception in hand_lmk_callback: {type(e).__name__}: {e}", throttle_duration_sec=2)
             return
 
     def send_serial_signal(self, signal):

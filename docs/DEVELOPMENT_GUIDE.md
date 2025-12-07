@@ -348,7 +348,7 @@ cd ~/Desktop/bloom
 
 ### Auto-Start on Boot
 
-See `SETUP_AUTOSTART.md` for detailed instructions.
+See `docs/SETUP_AUTOSTART.md` for detailed instructions.
 
 Quick setup:
 ```bash
@@ -517,7 +517,7 @@ sudo lsof /dev/ttyUSB0
    - `calculate_hand_interaction_score()` is robust to occlusion
 
 2. **If still issues:**
-   - Consider using MediaPipe (see `HAND_DETECTION_COMPARISON.md`)
+   - Consider using MediaPipe (see `docs/HAND_DETECTION_COMPARISON.md`)
    - Adjust keypoint indices if using different model
 
 ### Issue: Performance Issues
@@ -552,7 +552,10 @@ sudo lsof /dev/ttyUSB0
    ```bash
    # Test serial communication
    echo "open" > /dev/ttyUSB0
-   # Check Arduino serial monitor
+   
+   # Monitor Arduino serial output:
+   ./bin/arduino-cli monitor -p /dev/ttyUSB0 -b arduino:avr:uno --config baudrate=9600
+   # Or use: screen /dev/ttyUSB0 9600
    ```
 
 3. **Verify baud rate matches:**
@@ -651,7 +654,7 @@ sudo lsof /dev/ttyUSB0
 1. **Switch to MediaPipe:**
    - Better performance on edge devices
    - Better occlusion handling
-   - See `HAND_DETECTION_COMPARISON.md`
+   - See `docs/HAND_DETECTION_COMPARISON.md`
 
 2. **Machine Learning:**
    - Train custom model for hand-holding
@@ -688,14 +691,17 @@ sudo lsof /dev/ttyUSB0
 
 ### Related Files
 - `README.md` - Basic usage guide
-- `SETUP_AUTOSTART.md` - Auto-start setup
-- `HAND_DETECTION_COMPARISON.md` - MediaPipe vs hand_lmk_detection
-- `ISSUES_FOUND.md` - Known issues and fixes
+- `docs/SETUP_AUTOSTART.md` - Auto-start setup
+- `docs/HAND_DETECTION_COMPARISON.md` - MediaPipe vs hand_lmk_detection
+- `docs/ISSUES_FOUND.md` - Known issues and fixes
 
 ### Support
 - Check logs: `journalctl -u hand-holding-detector.service -f`
 - ROS2 topics: `ros2 topic list`
-- Serial monitor: Use Arduino IDE or `screen /dev/ttyUSB0 9600`
+- Serial monitor: 
+  - Arduino IDE Serial Monitor, OR
+  - `screen /dev/ttyUSB0 9600`, OR
+  - `./bin/arduino-cli monitor -p /dev/ttyUSB0 -b arduino:avr:uno --config baudrate=9600`
 
 ---
 

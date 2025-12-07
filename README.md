@@ -93,6 +93,18 @@ When the system is running correctly:
   ```
 - Your serial device will receive the character `1` each time the holding gesture begins.
 
+### Monitoring Serial Communication
+
+To view the Arduino's serial output and verify commands are being received, you can use:
+
+```bash
+./bin/arduino-cli monitor -p /dev/ttyUSB0 -b arduino:avr:uno --config baudrate=9600
+```
+
+Alternatively, you can use:
+- Arduino IDE Serial Monitor
+- `screen /dev/ttyUSB0 9600`
+
 ## Ideas for Improvement
 
 Here are some ways to enhance the hand-holding detection for better accuracy and robustness:
@@ -125,3 +137,15 @@ Improve the stability of detection by preventing rapid flickering due to momenta
     1.  **Require a "Hold" Streak:** Instead of immediately declaring "holding" when the condition is met, require the holding criteria to be true for a certain number of consecutive frames (e.g., 5 frames).
     2.  **Require a "Release" Streak:** Similarly, only declare "hands released" after the non-holding condition has been true for several consecutive frames.
 *   **Benefits:** Provides a more stable and natural user experience by smoothing out transient detection errors.
+
+## Documentation
+
+For detailed documentation, see the `docs/` folder:
+
+- **[DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md)** - Comprehensive development guide for beginners
+- **[CURRENT_STATUS.md](docs/CURRENT_STATUS.md)** - Current project status and known issues
+- **[STABILITY_IMPROVEMENTS.md](docs/STABILITY_IMPROVEMENTS.md)** - Recent stability improvements (pair tracking, cooldown, hysteresis)
+- **[SETUP_AUTOSTART.md](docs/SETUP_AUTOSTART.md)** - Auto-start setup instructions for edge devices
+- **[HAND_DETECTION_COMPARISON.md](docs/HAND_DETECTION_COMPARISON.md)** - Comparison of hand detection methods
+- **[ISSUES_FOUND.md](docs/ISSUES_FOUND.md)** - Log of issues found and fixed during development
+- **[PUSH_TO_GITHUB.md](docs/PUSH_TO_GITHUB.md)** - GitHub setup and push instructions
