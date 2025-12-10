@@ -16,6 +16,8 @@ This guide explains how to set up the hand holding detector to start automatical
 cd /home/sunrise/Desktop/bloom
 chmod +x hand_holding_detector.py
 chmod +x start_hand_holding_detector.sh
+chmod +x hand_holding_detector_handshake.py
+chmod +x start_hand_holding_detector_handshake.sh
 ```
 
 ### Step 2: Test the Startup Script Manually
@@ -23,7 +25,11 @@ chmod +x start_hand_holding_detector.sh
 Before setting up auto-start, test that the script works:
 
 ```bash
+# Standard detector (wrist distance)
 ./start_hand_holding_detector.sh
+
+# OR Handshake detector (advanced method)
+./start_hand_holding_detector_handshake.sh
 ```
 
 Press Ctrl+C to stop it. If it works correctly, proceed to the next step.
@@ -33,7 +39,11 @@ Press Ctrl+C to stop it. If it works correctly, proceed to the next step.
 Copy the service file to the systemd directory:
 
 ```bash
+# Standard detector
 sudo cp hand-holding-detector.service /etc/systemd/system/
+
+# Handshake detector
+sudo cp hand-holding-detector-handshake.service /etc/systemd/system/
 ```
 
 ### Step 4: Reload Systemd
@@ -46,10 +56,14 @@ sudo systemctl daemon-reload
 
 ### Step 5: Enable the Service
 
-Enable the service to start on boot:
+Enable the service to start on boot (choose one or both, depending on which detector you want running):
 
 ```bash
+# Standard detector
 sudo systemctl enable hand-holding-detector.service
+
+# Handshake detector
+sudo systemctl enable hand-holding-detector-handshake.service
 ```
 
 ### Step 6: Start the Service (Optional)
@@ -57,7 +71,11 @@ sudo systemctl enable hand-holding-detector.service
 You can start the service immediately without rebooting:
 
 ```bash
+# Standard detector
 sudo systemctl start hand-holding-detector.service
+
+# Handshake detector
+sudo systemctl start hand-holding-detector-handshake.service
 ```
 
 ### Step 7: Check Service Status
@@ -65,7 +83,11 @@ sudo systemctl start hand-holding-detector.service
 Verify the service is running:
 
 ```bash
+# Standard detector
 sudo systemctl status hand-holding-detector.service
+
+# Handshake detector
+sudo systemctl status hand-holding-detector-handshake.service
 ```
 
 ## Managing the Service
