@@ -18,6 +18,7 @@ chmod +x hand_holding_detector.py
 chmod +x start_hand_holding_detector.sh
 chmod +x hand_holding_detector_handshake.py
 chmod +x start_hand_holding_detector_handshake.sh
+chmod +x start_handshake_with_landmarks.sh
 ```
 
 ### Step 2: Test the Startup Script Manually
@@ -28,8 +29,11 @@ Before setting up auto-start, test that the script works:
 # Standard detector (wrist distance)
 ./start_hand_holding_detector.sh
 
-# OR Handshake detector (advanced method)
+# Handshake detector (advanced method)
 ./start_hand_holding_detector_handshake.sh
+
+# All-in-one (auto-launches hand_lmk_detection then handshake detector)
+./start_handshake_with_landmarks.sh
 ```
 
 Press Ctrl+C to stop it. If it works correctly, proceed to the next step.
@@ -44,6 +48,9 @@ sudo cp hand-holding-detector.service /etc/systemd/system/
 
 # Handshake detector
 sudo cp hand-holding-detector-handshake.service /etc/systemd/system/
+
+# All-in-one (starts hand_lmk_detection then handshake detector)
+sudo cp hand-holding-detector-handshake-full.service /etc/systemd/system/
 ```
 
 ### Step 4: Reload Systemd
@@ -64,6 +71,9 @@ sudo systemctl enable hand-holding-detector.service
 
 # Handshake detector
 sudo systemctl enable hand-holding-detector-handshake.service
+
+# All-in-one
+sudo systemctl enable hand-holding-detector-handshake-full.service
 ```
 
 ### Step 6: Start the Service (Optional)
@@ -76,6 +86,9 @@ sudo systemctl start hand-holding-detector.service
 
 # Handshake detector
 sudo systemctl start hand-holding-detector-handshake.service
+
+# All-in-one
+sudo systemctl start hand-holding-detector-handshake-full.service
 ```
 
 ### Step 7: Check Service Status
@@ -88,6 +101,9 @@ sudo systemctl status hand-holding-detector.service
 
 # Handshake detector
 sudo systemctl status hand-holding-detector-handshake.service
+
+# All-in-one
+sudo systemctl status hand-holding-detector-handshake-full.service
 ```
 
 ## Managing the Service

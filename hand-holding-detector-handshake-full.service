@@ -1,0 +1,27 @@
+[Unit]
+Description=Hand Holding Detector (Handshake) with Auto hand_lmk_detection
+After=network.target ros2-daemon.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=sunrise
+Group=sunrise
+WorkingDirectory=/home/sunrise/Desktop/bloom
+Environment="HOME=/home/sunrise"
+Environment="USER=sunrise"
+# Optionally override SERIAL_PORT via environment here
+# Environment="SERIAL_PORT=/dev/ttyACM0"
+ExecStart=/home/sunrise/Desktop/bloom/start_handshake_with_landmarks.sh
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+
