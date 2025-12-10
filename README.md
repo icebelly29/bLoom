@@ -4,12 +4,18 @@ This ROS2 package provides a node that detects when two hands are being held tog
 
 ## How It Works
 
-The `hand_holding_detector.py` script initializes a ROS2 node that:
-1.  **Subscribes** to the `/hobot_hand_lmk_detection` topic to receive real-time hand keypoint data.
-2.  **Analyzes** the incoming data to check if at least two hands are present in the camera's view.
-3.  **Calculates** the Euclidean distance between the wrists (keypoint 0) of the first two detected hands.
-4.  **Detects Holding**: If the distance between the wrists falls below a configurable threshold, it registers a "holding" event.
-5.  **Sends a Serial Signal**: Upon the initial detection of a "holding" state, it sends a single `1` character over the specified serial port. It is stateful and will not send another signal until the hands are released and the holding gesture is initiated again.
+The detector scripts initialize ROS2 nodes that:
+1.  **Subscribe** to the `/hobot_hand_lmk_detection` topic to receive real-time hand keypoint data.
+2.  **Analyze** the incoming data to check if at least two hands are present in the camera's view.
+3.  **Calculate** distances and interaction scores between detected hands using different methods:
+    - **Standard detector**: Uses wrist-to-wrist distance
+    - **Handshake detector**: Uses palm centers and fingertip-to-palm contacts
+4.  **Detect Holding**: When the detection criteria are met for a configurable number of consecutive frames, it registers a "holding" event.
+5.  **Send Serial Signals**: 
+    - Sends `"open"` (newline-terminated) when holding is detected
+    - Waits a minimum duration (default 10 seconds)
+    - Sends `"close"` only after the minimum duration AND hands are released
+    - Includes cooldown period and pair tracking to prevent rapid state changes
 
 ## Requirements
 
@@ -64,6 +70,10 @@ This node depends on the keypoint data from the `hand_lmk_detection` package. Yo
 
 ### Step 3: Run the Hand Holding Detector
 
+There are two detector variants available:
+
+#### Option A: Standard Detector (Wrist Distance Method)
+
 1.  Open a **second terminal** and source the TROS environment:
     ```bash
     source /opt/tros/humble/setup.bash
@@ -81,6 +91,45 @@ This node depends on the keypoint data from the `hand_lmk_detection` package. Yo
     - **`serial_port`**: Replace `/dev/ttyUSB0` with the actual path to your serial device.
     - **`holding_threshold_pixels`**: This is the maximum distance (in pixels) between wrists to be considered "holding". Decrease this value for stricter detection or increase it for more lenient detection.
 
+#### Option B: Handshake Detector (Advanced Method)
+
+The handshake detector uses a more sophisticated approach that checks for actual hand interaction by analyzing palm proximity and fingertip-to-palm contacts. This reduces false positives where hands are merely close but not actually holding.
+
+1.  Open a **second terminal** and source the TROS environment:
+    ```bash
+    source /opt/tros/humble/setup.bash
+    ```
+
+2.  Make the detector script executable:
+    ```bash
+    chmod +x hand_holding_detector_handshake.py
+    ```
+
+3.  Run the handshake detector with recommended parameters:
+    ```bash
+    ./hand_holding_detector_handshake.py --ros-args \
+      -p serial_port:='/dev/ttyUSB0' \
+      -p palm_distance_threshold:=60.0 \
+      -p fingertip_palm_threshold:=50.0 \
+      -p min_fingertip_contacts:=3 \
+      -p holding_frames_threshold:=3 \
+      -p release_frames_threshold:=5 \
+      -p min_open_duration_seconds:=10.0 \
+      -p cooldown_seconds:=5.0 \
+      -p strict_pair_threshold:=120.0
+    ```
+
+    **Parameters:**
+    - **`serial_port`**: Serial port path (e.g., `/dev/ttyUSB0`)
+    - **`palm_distance_threshold`**: Maximum distance between palm centers (pixels) to consider holding
+    - **`fingertip_palm_threshold`**: Maximum distance for fingertip-to-opposite-palm contact (pixels)
+    - **`min_fingertip_contacts`**: Minimum number of fingertip-to-palm contacts required (default: 3)
+    - **`holding_frames_threshold`**: Consecutive frames required to confirm holding (default: 3)
+    - **`release_frames_threshold`**: Consecutive frames required to confirm release (default: 5)
+    - **`min_open_duration_seconds`**: Minimum time flower stays open after detection (default: 10.0)
+    - **`cooldown_seconds`**: Delay after closing before new detection allowed (default: 5.0)
+    - **`strict_pair_threshold`**: Maximum wrist distance to consider a valid pair (pixels, default: 120.0)
+
 ## Expected Output
 
 When the system is running correctly:
@@ -88,36 +137,77 @@ When the system is running correctly:
 - The second terminal will log messages like:
   ```
   [INFO] [hand_holding_detector]: Hand Holding Detector is running. Waiting for hand landmarks...
-  [INFO] [hand_holding_detector]: Hand holding DETECTED! (Distance: 42.17px). Sending '1' to serial.
-  [INFO] [hand_holding_detector]: Hands released. (Distance: 85.91px)
+  [INFO] [hand_holding_detector]: Hand holding DETECTED! (Distance: 42.17px, Threshold: 30.0px). Sending 'open' to serial.
+  [INFO] [hand_holding_detector]: Minimum open duration (10.0s) passed and hands released. Sending 'close'.
   ```
-- Your serial device will receive the character `1` each time the holding gesture begins.
+- Your serial device will receive the string `"open"` or `"close"` (newline-terminated) each time the state changes.
+- The Arduino Master will print confirmation messages like:
+  ```
+  Master Ready. Type 'open', 'close', or 'speed <value>'
+  Sent 'open 30' to all slaves.
+  Sent 'close 200' to all slaves.
+  ```
 
 ### Monitoring Serial Communication
 
 To view the Arduino's serial output and verify commands are being received, you can use:
 
+**For Arduino UNO (AVR):**
 ```bash
 ./bin/arduino-cli monitor -p /dev/ttyUSB0 -b arduino:avr:uno --config baudrate=9600
+```
+
+**For Arduino UNO R4 (Renesas):**
+```bash
+./bin/arduino-cli monitor -p /dev/ttyUSB0 -b arduino:renesas_uno:renesas_uno --config baudrate=9600
 ```
 
 Alternatively, you can use:
 - Arduino IDE Serial Monitor
 - `screen /dev/ttyUSB0 9600`
 
+**Note:** Make sure to close the serial monitor before running the hand holding detector, as the port can only be accessed by one process at a time.
+
+## Detector Variants
+
+### Standard Detector (`hand_holding_detector.py`)
+
+Uses wrist-to-wrist distance for detection. Simple and fast, suitable for most use cases.
+
+**Features:**
+- Wrist distance-based detection
+- Pair tracking to prevent switching between hand pairs
+- Hysteresis (different thresholds for holding vs releasing)
+- Minimum open duration (10 seconds default)
+- Cooldown period after closing
+
+### Handshake Detector (`hand_holding_detector_handshake.py`) ✅ **IMPLEMENTED**
+
+Uses a more sophisticated approach that analyzes actual hand interaction by checking:
+1. Palm center proximity (using wrist + finger base keypoints)
+2. Fingertip-to-opposite-palm contacts
+3. Interaction scoring based on multiple keypoint proximities
+
+**Benefits:**
+- Reduces false positives where hands are merely close but not actually holding
+- More robust to hand overlap/occlusion
+- Better detection of actual hand-holding gestures
+
+**When to use:**
+- Crowded environments with multiple hands
+- Need for higher accuracy (fewer false positives)
+- When hands may overlap significantly
+
 ## Ideas for Improvement
 
-Here are some ways to enhance the hand-holding detection for better accuracy and robustness:
+Here are additional ways to enhance the hand-holding detection:
 
-### 1. The "Handshake" Method: Using More Keypoints
+### 1. The "Handshake" Method: Using More Keypoints ✅ **IMPLEMENTED**
 
-Instead of relying solely on the distance between wrists, leverage more hand keypoints to detect actual hand interaction.
-
-*   **Concept:**
-    1.  Calculate the approximate center of the palm for each detected hand.
-    2.  Check for proximity between the palm centers.
-    3.  Crucially, check if fingertip keypoints from one hand are close to the palm or finger keypoints of the other hand, indicating interlaced fingers or a firm grip.
-*   **Benefits:** Reduces false positives where hands are merely close but not holding.
+See `hand_holding_detector_handshake.py` for the implementation. This method:
+- Calculates palm centers using wrist and finger base keypoints (less occluded)
+- Checks fingertip-to-opposite-palm proximity
+- Uses interaction scoring for more robust detection
 
 ### 2. The "Context is King" Method: Associating Hands with People
 
